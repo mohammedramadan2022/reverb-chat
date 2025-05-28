@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Chat Application</title>
+    <title>Chat with {{ $otherUser->name }}</title>
     <!-- Styles -->
     <style>
         body {
@@ -111,12 +111,30 @@
             align-items: center;
             margin-bottom: 20px;
         }
+        .btn {
+            display: inline-block;
+            padding: 10px 15px;
+            background-color: #4299e1;
+            color: white;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .btn:hover {
+            background-color: #3182ce;
+        }
+        .btn-secondary {
+            background-color: #718096;
+        }
+        .btn-secondary:hover {
+            background-color: #4a5568;
+        }
         .chat-layout {
             display: flex;
             gap: 20px;
             height: calc(100vh - 180px);
         }
-        .users-list {
+        .rooms-list {
             width: 300px;
             background-color: white;
             border-radius: 8px;
@@ -125,19 +143,22 @@
             display: flex;
             flex-direction: column;
         }
-        .users-header {
+        .rooms-header {
             background-color: #4a5568;
             color: white;
             padding: 15px;
             font-size: 18px;
             font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .users-container {
+        .rooms-container {
             flex-grow: 1;
             overflow-y: auto;
             padding: 10px;
         }
-        .user-item {
+        .room-item {
             display: flex;
             align-items: center;
             padding: 10px;
@@ -147,13 +168,13 @@
             color: #333;
             transition: background-color 0.2s;
         }
-        .user-item:hover {
+        .room-item:hover {
             background-color: #f7fafc;
         }
-        .user-item.active {
+        .room-item.active {
             background-color: #ebf8ff;
         }
-        .user-name {
+        .room-name {
             margin-left: 10px;
             font-weight: 500;
         }
@@ -165,16 +186,6 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
-        }
-        .no-chat-selected {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100px;
-            background-color: #f7fafc;
-            color: #718096;
-            font-size: 16px;
-            border-top: 1px solid #e2e8f0;
         }
         .chat-header {
             background-color: #4a5568;
@@ -350,19 +361,25 @@
 
     <div class="container">
         <div class="page-header">
-            <h1>Private Chat</h1>
+            <h1>Chat Room</h1>
+            <a href="{{ route('chat.rooms') }}" class="btn btn-secondary">Back to Rooms</a>
         </div>
 
         <div class="chat-layout">
-            <div class="users-list">
-                <div class="users-header">
-                    <h2>Contacts</h2>
+            <div class="rooms-list">
+                <div class="rooms-header">
+                    <h2>Your Chats</h2>
+                    <a href="{{ route('chat.rooms.create') }}" class="btn">New</a>
                 </div>
-                <div class="users-container">
-                    @foreach($users as $user)
-                        <a href="{{ route('chat.index', ['user_id' => $user->id]) }}" class="user-item {{ $receiver && $receiver->id === $user->id ? 'active' : '' }}">
-                            <div class="user-avatar">{{ substr($user->name, 0, 1) }}</div>
-                            <div class="user-name">{{ $user->name }}</div>
+                <div class="rooms-container">
+                    @foreach($chatRooms as $chatRoom)
+                        @php
+                            $roomOtherUser = $chatRoom->getOtherUser(auth()->id());
+                            $isActive = isset($room) && is_object($room) && $chatRoom->id == $room->id;
+                        @endphp
+                        <a href="{{ route('chat.room', $chatRoom->id) }}" class="room-item {{ $isActive ? 'active' : '' }}">
+                            <div class="user-avatar">{{ $roomOtherUser ? substr($roomOtherUser->name, 0, 1) : '?' }}</div>
+                            <div class="room-name">{{ $roomOtherUser ? $roomOtherUser->name : 'Unknown User' }}</div>
                         </a>
                     @endforeach
                 </div>
@@ -370,13 +387,11 @@
 
             <div class="chat-container">
                 <div class="chat-header">
-                    <span>{{ $receiver ? 'Chat with ' . $receiver->name : 'Select a user to start chatting' }}</span>
-                    @if($receiver)
-                        <div class="online-indicator">
-                            <div class="online-dot"></div>
-                            Online
-                        </div>
-                    @endif
+                    <span>Chat with {{ $otherUser->name }}</span>
+                    <div class="online-indicator">
+                        <div class="online-dot"></div>
+                        Online
+                    </div>
                 </div>
                 <div class="chat-messages" id="chat-messages">
                     @foreach($messages as $message)
@@ -390,16 +405,10 @@
                         </div>
                     @endforeach
                 </div>
-                @if($receiver)
-                    <div class="chat-input">
-                        <input type="text" id="message-input" placeholder="Type your message to {{ $receiver->name }}...">
-                        <button id="send-button" data-receiver="{{ $receiver->id }}">Send</button>
-                    </div>
-                @else
-                    <div class="no-chat-selected">
-                        <p>Select a user from the list to start chatting</p>
-                    </div>
-                @endif
+                <div class="chat-input">
+                    <input type="text" id="message-input" placeholder="Type your message to {{ $otherUser->name }}...">
+                    <button id="send-button" data-room="{{ isset($room) && is_object($room) ? $room->id : '' }}">Send</button>
+                </div>
             </div>
         </div>
     </div>
@@ -410,7 +419,13 @@
             const messageInput = document.getElementById('message-input');
             const sendButton = document.getElementById('send-button');
             let lastMessageId = 0;
-            let currentReceiverId = sendButton ? sendButton.dataset.receiver : null;
+            let currentRoomId = sendButton ? sendButton.dataset.room : null;
+
+            // If no room ID is available, disable messaging
+            if (!currentRoomId) {
+                if (messageInput) messageInput.disabled = true;
+                if (sendButton) sendButton.disabled = true;
+            }
 
             // Toggle dropdown menu
             window.toggleDropdown = function() {
@@ -433,9 +448,7 @@
 
             // Scroll to bottom of messages
             function scrollToBottom() {
-                if (messagesContainer) {
-                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                }
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
 
             // Initial scroll to bottom
@@ -450,8 +463,6 @@
 
             // Send message function
             function sendMessage() {
-                if (!messageInput || !currentReceiverId) return;
-
                 const content = messageInput.value.trim();
                 if (!content) return;
 
@@ -463,7 +474,7 @@
                     },
                     body: JSON.stringify({
                         content: content,
-                        receiver_id: currentReceiverId
+                        chat_room_id: currentRoomId
                     })
                 })
                 .then(response => response.json())
@@ -477,8 +488,6 @@
 
             // Add message to the chat
             function addMessage(message) {
-                if (!messagesContainer) return;
-
                 const messageElement = document.createElement('div');
                 messageElement.className = `message ${message.user_id === {{ auth()->id() }} ? 'sent' : 'received'}`;
                 messageElement.dataset.id = message.id;
@@ -532,9 +541,9 @@
 
             // Poll for new messages
             function pollMessages() {
-                if (!currentReceiverId) return;
+                if (!currentRoomId) return;
 
-                fetch(`{{ route('chat.messages') }}?last_id=${lastMessageId}&receiver_id=${currentReceiverId}`)
+                fetch(`{{ route('chat.messages') }}?last_id=${lastMessageId}&chat_room_id=${currentRoomId}`)
                     .then(response => response.json())
                     .then(data => {
                         if (data.length > 0) {
@@ -547,24 +556,26 @@
                     .catch(error => console.error('Error:', error));
             }
 
-            // Set up event listeners
-            if (sendButton) {
+            // Set up event listeners if elements are available and not disabled
+            if (sendButton && !sendButton.disabled) {
                 sendButton.addEventListener('click', sendMessage);
             }
 
-            if (messageInput) {
+            if (messageInput && !messageInput.disabled) {
                 messageInput.addEventListener('keypress', function(e) {
                     if (e.key === 'Enter') {
                         sendMessage();
                     }
                 });
+            }
 
-                // Focus input field on page load
+            // Focus input field on page load if it's not disabled
+            if (messageInput && !messageInput.disabled) {
                 messageInput.focus();
             }
 
-            // Poll for new messages every 3 seconds
-            if (currentReceiverId) {
+            // Poll for new messages every 3 seconds if we have a room ID
+            if (currentRoomId) {
                 setInterval(pollMessages, 3000);
             }
         });
