@@ -82,4 +82,48 @@ class ChatController extends Controller
 
         return response()->json($messages);
     }
+
+    /**
+     * Check for new messages in all rooms except the current one.
+     */
+    public function checkNewMessages(Request $request)
+    {
+        $currentRoomId = $request->input('current_room_id');
+        $lastCheckedIds = json_decode($request->input('last_checked_ids', '{}'), true);
+
+        $userId = auth()->id();
+        $chatRooms = auth()->user()->chatRooms();
+
+        $newMessages = [];
+
+        foreach ($chatRooms as $room) {
+            // Skip the current room
+            if ($room->id == $currentRoomId) {
+                continue;
+            }
+
+            $lastCheckedId = $lastCheckedIds[$room->id] ?? 0;
+
+            // Get the latest message in this room
+            $latestMessage = Message::where('chat_room_id', $room->id)
+                ->when($lastCheckedId > 0, function ($query) use ($lastCheckedId) {
+                    return $query->where('id', '>', $lastCheckedId);
+                })
+                ->latest()
+                ->first();
+
+            if ($latestMessage && $latestMessage->user_id != $userId) {
+                $otherUser = $room->getOtherUser($userId);
+                $newMessages[] = [
+                    'room_id' => $room->id,
+                    'message_id' => $latestMessage->id,
+                    'sender_name' => $otherUser->name,
+                    'content' => $latestMessage->content,
+                    'created_at' => $latestMessage->created_at
+                ];
+            }
+        }
+
+        return response()->json($newMessages);
+    }
 }

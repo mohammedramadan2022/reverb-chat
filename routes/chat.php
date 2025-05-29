@@ -24,4 +24,5 @@ Route::middleware('auth')->group(function () {
     // API endpoints for messages
     Route::post('/chat/messages', [ChatController::class, 'store'])->name('chat.store');
     Route::get('/chat/messages', [ChatController::class, 'getMessages'])->name('chat.messages');
+    Route::get('/chat/check-new-messages', [ChatController::class, 'checkNewMessages'])->name('chat.check-new-messages');
 });

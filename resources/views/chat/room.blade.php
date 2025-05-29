@@ -178,6 +178,20 @@
             margin-left: 10px;
             font-weight: 500;
         }
+        .notification-badge {
+            background-color: #e53e3e;
+            color: white;
+            border-radius: 50%;
+            min-width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: auto;
+            padding: 0 5px;
+        }
         .chat-container {
             flex-grow: 1;
             background-color: white;
@@ -377,9 +391,10 @@
                             $roomOtherUser = $chatRoom->getOtherUser(auth()->id());
                             $isActive = isset($room) && is_object($room) && $chatRoom->id == $room->id;
                         @endphp
-                        <a href="{{ route('chat.room', $chatRoom->id) }}" class="room-item {{ $isActive ? 'active' : '' }}">
+                        <a href="{{ route('chat.room', $chatRoom->id) }}" class="room-item {{ $isActive ? 'active' : '' }}" data-room-id="{{ $chatRoom->id }}">
                             <div class="user-avatar">{{ $roomOtherUser ? substr($roomOtherUser->name, 0, 1) : '?' }}</div>
                             <div class="room-name">{{ $roomOtherUser ? $roomOtherUser->name : 'Unknown User' }}</div>
+                            <div class="notification-badge" style="display: none;">0</div>
                         </a>
                     @endforeach
                 </div>
@@ -539,7 +554,7 @@
                 lastMessageId = message.id;
             }
 
-            // Poll for new messages
+            // Poll for new messages in current room
             function pollMessages() {
                 if (!currentRoomId) return;
 
@@ -554,6 +569,80 @@
                         }
                     })
                     .catch(error => console.error('Error:', error));
+            }
+
+            // Store last checked message IDs for each room
+            let lastCheckedIds = {};
+
+            // Initialize lastCheckedIds with the current latest message IDs
+            function initializeLastCheckedIds() {
+                const roomItems = document.querySelectorAll('.room-item');
+                roomItems.forEach(item => {
+                    const roomId = item.dataset.roomId;
+                    if (roomId) {
+                        // For the current room, use the lastMessageId
+                        if (roomId == currentRoomId && lastMessageId > 0) {
+                            lastCheckedIds[roomId] = lastMessageId;
+                        } else {
+                            // For other rooms, initialize to 0 (will be updated on first check)
+                            lastCheckedIds[roomId] = 0;
+                        }
+                    }
+                });
+            }
+
+            // Check for new messages in all rooms except the current one
+            function checkNewMessages() {
+                fetch(`{{ route('chat.check-new-messages') }}?current_room_id=${currentRoomId}&last_checked_ids=${JSON.stringify(lastCheckedIds)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.length > 0) {
+                            // Process new messages
+                            data.forEach(message => {
+                                const roomId = message.room_id;
+                                const messageId = message.message_id;
+
+                                // Update the last checked ID for this room
+                                lastCheckedIds[roomId] = Math.max(lastCheckedIds[roomId] || 0, messageId);
+
+                                // Find the room item
+                                const roomItem = document.querySelector(`.room-item[data-room-id="${roomId}"]`);
+                                if (roomItem) {
+                                    // Get the notification badge
+                                    const badge = roomItem.querySelector('.notification-badge');
+                                    if (badge) {
+                                        // Increment the count
+                                        let count = parseInt(badge.textContent) || 0;
+                                        count++;
+                                        badge.textContent = count;
+                                        badge.style.display = 'flex';
+
+                                        // Show browser notification if supported
+                                        if ('Notification' in window && Notification.permission === 'granted') {
+                                            const notification = new Notification(`New message from ${message.sender_name}`, {
+                                                body: message.content
+                                            });
+
+                                            // Close the notification after 5 seconds
+                                            setTimeout(() => {
+                                                notification.close();
+                                            }, 5000);
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    })
+                    .catch(error => console.error('Error:', error));
+            }
+
+            // Request notification permission
+            function requestNotificationPermission() {
+                if ('Notification' in window) {
+                    if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+                        Notification.requestPermission();
+                    }
+                }
             }
 
             // Set up event listeners if elements are available and not disabled
@@ -574,10 +663,30 @@
                 messageInput.focus();
             }
 
+            // Initialize lastCheckedIds
+            initializeLastCheckedIds();
+
+            // Request notification permission
+            requestNotificationPermission();
+
+            // Add click event to room items to reset notification badge
+            document.querySelectorAll('.room-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    const badge = this.querySelector('.notification-badge');
+                    if (badge) {
+                        badge.textContent = '0';
+                        badge.style.display = 'none';
+                    }
+                });
+            });
+
             // Poll for new messages every 3 seconds if we have a room ID
             if (currentRoomId) {
                 setInterval(pollMessages, 3000);
             }
+
+            // Check for new messages in all rooms every 5 seconds
+            setInterval(checkNewMessages, 5000);
         });
     </script>
 </body>
